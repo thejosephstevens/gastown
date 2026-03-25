@@ -771,7 +771,7 @@ func (d *Daemon) closeMessage(id string) error {
 type AgentBeadInfo struct {
 	ID         string `json:"id"`
 	Type       string `json:"issue_type"`
-	State      string // From DB column (agent_state), fallback to description
+	State      string // From agent_state label (set via bd set-state), fallback to description
 	HookBead   string // From DB column (hook_bead)
 	RoleType   string // Parsed from description: role_type
 	Rig        string // Parsed from description: rig
@@ -840,12 +840,16 @@ func (d *Daemon) getAgentBeadInfo(agentBeadID string) (*AgentBeadInfo, error) {
 		info.Rig = fields.Rig
 	}
 
-	// Use AgentState from database column directly (not from description).
-	// UpdateAgentState updates the DB column but not the description text,
-	// so the description can contain stale state (e.g., "spawning" after
-	// the polecat has transitioned to "working"). Fall back to description
-	// only if the DB column is empty (legacy beads).
-	info.State = issue.AgentState
+	// Read agent_state from label (authoritative, set via bd set-state).
+	// bd set-state writes "agent_state:<value>" labels — indexed and queryable.
+	// The agent_state DB column was removed in beads v0.62.0 (gt-4ly).
+	for _, label := range issue.Labels {
+		if strings.HasPrefix(label, "agent_state:") {
+			info.State = strings.TrimPrefix(label, "agent_state:")
+			break
+		}
+	}
+	// Fall back to description text for legacy beads without label support.
 	if info.State == "" && fields != nil {
 		info.State = fields.AgentState
 	}
