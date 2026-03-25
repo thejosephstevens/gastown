@@ -2,11 +2,14 @@
 package version
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime/debug"
 	"strings"
+	"time"
 )
 
 // These variables are set at build time via ldflags in cmd package.
@@ -14,6 +17,12 @@ import (
 var (
 	// Commit can be set from cmd package or read from build info
 	Commit = ""
+)
+
+// InstallMethod indicates how the gt binary was installed.
+const (
+	InstallMethodSource   = "source"
+	InstallMethodHomebrew = "homebrew"
 )
 
 // StaleBinaryInfo contains information about binary staleness.
@@ -24,6 +33,7 @@ type StaleBinaryInfo struct {
 	BinaryCommit  string // Commit hash the binary was built from
 	RepoCommit    string // Current repo HEAD commit
 	CommitsBehind int    // Number of commits binary is behind (0 if unknown)
+	InstallMethod string // How the binary was installed ("source" or "homebrew")
 	Error         error  // Any error encountered during check
 }
 
@@ -66,6 +76,150 @@ func commitsMatch(a, b string) bool {
 	return strings.HasPrefix(a, b[:minLen]) || strings.HasPrefix(b, a[:minLen])
 }
 
+// isHexCommit returns true if s looks like a git commit hash (all hex chars, 7+ chars).
+func isHexCommit(s string) bool {
+	if len(s) < 7 {
+		return false
+	}
+	for _, c := range s {
+		if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')) {
+			return false
+		}
+	}
+	return true
+}
+
+// brewStaleCacheEntry is the schema for ~/.cache/gt/brew-stale-cache.json.
+type brewStaleCacheEntry struct {
+	InstalledVersion string    `json:"installed_version"`
+	IsOutdated       bool      `json:"is_outdated"`
+	LatestVersion    string    `json:"latest_version,omitempty"`
+	CheckedAt        time.Time `json:"checked_at"`
+}
+
+// brewStaleCacheTTL is how long a brew cache entry is valid before rechecking.
+const brewStaleCacheTTL = 24 * time.Hour
+
+// brewStaleCachePath returns the path to the brew staleness cache file.
+func brewStaleCachePath() string {
+	if cacheDir := os.Getenv("XDG_CACHE_HOME"); cacheDir != "" {
+		return filepath.Join(cacheDir, "gt", "brew-stale-cache.json")
+	}
+	home := os.Getenv("HOME")
+	if home == "" {
+		return ""
+	}
+	return filepath.Join(home, ".cache", "gt", "brew-stale-cache.json")
+}
+
+// loadBrewCache loads the brew staleness cache. Returns nil if not found or invalid.
+func loadBrewCache(path string) *brewStaleCacheEntry {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil
+	}
+	var entry brewStaleCacheEntry
+	if err := json.Unmarshal(data, &entry); err != nil {
+		return nil
+	}
+	return &entry
+}
+
+// saveBrewCache writes a brew staleness cache entry.
+func saveBrewCache(path string, entry *brewStaleCacheEntry) {
+	if path == "" {
+		return
+	}
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return
+	}
+	data, err := json.Marshal(entry)
+	if err != nil {
+		return
+	}
+	_ = os.WriteFile(path, data, 0o644)
+}
+
+// getBrewInstalledVersion returns the installed version of gt via brew.
+// Returns "" if brew is not available or gt is not installed via brew.
+var getBrewInstalledVersion = func() string {
+	cmd := exec.Command("brew", "list", "--versions", "gt")
+	out, err := cmd.Output()
+	if err != nil {
+		return ""
+	}
+	// Output format: "gt 1.2.3" — extract the version part
+	parts := strings.Fields(strings.TrimSpace(string(out)))
+	if len(parts) < 2 {
+		return ""
+	}
+	return parts[len(parts)-1]
+}
+
+// checkBrewOutdated checks if gt is outdated via brew.
+// Returns (isOutdated, error).
+var checkBrewOutdated = func() (bool, error) {
+	cmd := exec.Command("brew", "outdated", "--quiet", "gt")
+	out, err := cmd.Output()
+	if err != nil {
+		// Exit code 1 with no output means not outdated (nothing to report)
+		if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 1 {
+			return false, nil
+		}
+		return false, err
+	}
+	// If "gt" appears in the output, it's outdated
+	return strings.Contains(strings.TrimSpace(string(out)), "gt"), nil
+}
+
+// checkHomebrewStaleness checks if a Homebrew-installed gt is outdated.
+// Uses a file-based cache to avoid running brew on every command.
+// On any error, returns IsStale=false (no false positives).
+func checkHomebrewStaleness() *StaleBinaryInfo {
+	info := &StaleBinaryInfo{
+		InstallMethod: InstallMethodHomebrew,
+		BinaryCommit:  "Homebrew",
+	}
+
+	cachePath := brewStaleCachePath()
+
+	// Get currently installed version (local, no network)
+	installed := getBrewInstalledVersion()
+	if installed == "" {
+		// Can't determine installed version — don't warn
+		return info
+	}
+
+	// Check cache
+	if cachePath != "" {
+		if cached := loadBrewCache(cachePath); cached != nil {
+			if cached.InstalledVersion == installed && time.Since(cached.CheckedAt) < brewStaleCacheTTL {
+				info.IsStale = cached.IsOutdated
+				return info
+			}
+		}
+	}
+
+	// Cache miss — check with brew
+	outdated, err := checkBrewOutdated()
+	if err != nil {
+		// Brew check failed — don't warn
+		return info
+	}
+
+	info.IsStale = outdated
+
+	// Write cache
+	saveBrewCache(cachePath, &brewStaleCacheEntry{
+		InstalledVersion: installed,
+		IsOutdated:       outdated,
+		CheckedAt:        time.Now(),
+	})
+
+	return info
+}
+
 // CheckStaleBinary compares the binary's embedded commit with the repo HEAD.
 // It returns staleness info including whether the binary needs rebuilding.
 // This check is designed to be fast and non-blocking - errors are captured
@@ -79,6 +233,15 @@ func CheckStaleBinary(repoDir string) *StaleBinaryInfo {
 		info.Error = fmt.Errorf("cannot determine binary commit (dev build?)")
 		return info
 	}
+
+	// If the binary commit is not a hex hash (e.g. "Homebrew"), this is a
+	// package-manager install. Use the Homebrew staleness path instead of
+	// comparing against the source repo HEAD. (gt-wiv)
+	if !isHexCommit(info.BinaryCommit) {
+		return checkHomebrewStaleness()
+	}
+
+	info.InstallMethod = InstallMethodSource
 
 	// Get repo HEAD
 	cmd := exec.Command("git", "rev-parse", "HEAD")

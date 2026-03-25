@@ -47,6 +47,15 @@ func (c *StaleBinaryCheck) Run(ctx *CheckContext) *CheckResult {
 	}
 
 	if info.IsStale {
+		if info.InstallMethod == version.InstallMethodHomebrew {
+			return &CheckResult{
+				Name:    c.Name(),
+				Status:  StatusWarning,
+				Message: "gt is outdated (installed via Homebrew)",
+				FixHint: "Run 'brew upgrade gt' to update",
+			}
+		}
+
 		msg := fmt.Sprintf("Binary is stale (built from %s, repo at %s)",
 			version.ShortCommit(info.BinaryCommit), version.ShortCommit(info.RepoCommit))
 		if info.CommitsBehind > 0 {
@@ -59,6 +68,14 @@ func (c *StaleBinaryCheck) Run(ctx *CheckContext) *CheckResult {
 			Status:  StatusWarning,
 			Message: msg,
 			FixHint: "Run 'gt install' to rebuild and install",
+		}
+	}
+
+	if info.InstallMethod == version.InstallMethodHomebrew {
+		return &CheckResult{
+			Name:    c.Name(),
+			Status:  StatusOK,
+			Message: "gt is up to date (installed via Homebrew)",
 		}
 	}
 
