@@ -113,23 +113,37 @@ func TestIsHexCommit(t *testing.T) {
 	}
 }
 
-func TestCheckStaleBinary_HomebrewPath(t *testing.T) {
-	original := Commit
-	defer func() { Commit = original }()
-
-	// Set commit to "Homebrew" to simulate Homebrew-built binary
-	Commit = "Homebrew"
-
-	// Stub brew commands to simulate current install
+// stubBrewFuncs stubs the brew function variables and returns a cleanup function.
+func stubBrewFuncs(t *testing.T, version func() string, outdated func() (bool, error), cachePath func() string) {
+	t.Helper()
+	origCommit := Commit
 	origGetVersion := getBrewInstalledVersion
 	origCheckOutdated := checkBrewOutdated
-	defer func() {
+	origCachePath := brewStaleCachePath
+	t.Cleanup(func() {
+		Commit = origCommit
 		getBrewInstalledVersion = origGetVersion
 		checkBrewOutdated = origCheckOutdated
-	}()
+		brewStaleCachePath = origCachePath
+	})
+	Commit = "Homebrew"
+	getBrewInstalledVersion = version
+	checkBrewOutdated = outdated
+	if cachePath != nil {
+		brewStaleCachePath = cachePath
+	} else {
+		// Default: use a temp dir so tests don't hit real cache
+		dir := t.TempDir()
+		brewStaleCachePath = func() string { return filepath.Join(dir, "brew-stale-cache.json") }
+	}
+}
 
-	getBrewInstalledVersion = func() string { return "1.2.3" }
-	checkBrewOutdated = func() (bool, error) { return false, nil }
+func TestCheckStaleBinary_HomebrewPath(t *testing.T) {
+	stubBrewFuncs(t,
+		func() string { return "1.2.3" },
+		func() (bool, error) { return false, nil },
+		nil,
+	)
 
 	info := CheckStaleBinary(t.TempDir())
 	if info == nil {
@@ -144,20 +158,11 @@ func TestCheckStaleBinary_HomebrewPath(t *testing.T) {
 }
 
 func TestCheckStaleBinary_HomebrewOutdated(t *testing.T) {
-	original := Commit
-	defer func() { Commit = original }()
-
-	Commit = "Homebrew"
-
-	origGetVersion := getBrewInstalledVersion
-	origCheckOutdated := checkBrewOutdated
-	defer func() {
-		getBrewInstalledVersion = origGetVersion
-		checkBrewOutdated = origCheckOutdated
-	}()
-
-	getBrewInstalledVersion = func() string { return "1.2.3" }
-	checkBrewOutdated = func() (bool, error) { return true, nil }
+	stubBrewFuncs(t,
+		func() string { return "1.2.3" },
+		func() (bool, error) { return true, nil },
+		nil,
+	)
 
 	info := CheckStaleBinary(t.TempDir())
 	if info == nil {
@@ -172,21 +177,11 @@ func TestCheckStaleBinary_HomebrewOutdated(t *testing.T) {
 }
 
 func TestCheckStaleBinary_HomebrewNotInstalled(t *testing.T) {
-	original := Commit
-	defer func() { Commit = original }()
-
-	Commit = "Homebrew"
-
-	origGetVersion := getBrewInstalledVersion
-	origCheckOutdated := checkBrewOutdated
-	defer func() {
-		getBrewInstalledVersion = origGetVersion
-		checkBrewOutdated = origCheckOutdated
-	}()
-
-	// Simulate brew not finding gt
-	getBrewInstalledVersion = func() string { return "" }
-	checkBrewOutdated = func() (bool, error) { return false, nil }
+	stubBrewFuncs(t,
+		func() string { return "" },
+		func() (bool, error) { return false, nil },
+		nil,
+	)
 
 	info := CheckStaleBinary(t.TempDir())
 	if info == nil {

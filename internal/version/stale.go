@@ -101,7 +101,8 @@ type brewStaleCacheEntry struct {
 const brewStaleCacheTTL = 24 * time.Hour
 
 // brewStaleCachePath returns the path to the brew staleness cache file.
-func brewStaleCachePath() string {
+// It's a variable so tests can override it.
+var brewStaleCachePath = func() string {
 	if cacheDir := os.Getenv("XDG_CACHE_HOME"); cacheDir != "" {
 		return filepath.Join(cacheDir, "gt", "brew-stale-cache.json")
 	}
