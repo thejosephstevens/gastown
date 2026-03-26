@@ -125,7 +125,7 @@ func convoyTracksBead(beadsDir, convoyID, beadID string) bool {
 type ConvoyInfo struct {
 	ID            string // Convoy bead ID (e.g., "hq-cv-abc")
 	Owned         bool   // true if convoy has gt:owned label
-	MergeStrategy string // "direct", "mr", "local", or "" (default = mr)
+	MergeStrategy string // "direct", "mr", "local", "batch-pr", or "" (default = mr)
 }
 
 // IsOwnedDirect returns true if the convoy is owned with direct merge strategy.
@@ -362,7 +362,7 @@ func createBatchConvoy(beadIDs []string, rigName string, owned bool, mergeStrate
 
 // createAutoConvoy creates an auto-convoy for a single issue and tracks it.
 // If owned is true, the convoy is marked with the gt:owned label for caller-managed lifecycle.
-// mergeStrategy is optional: "direct", "mr", or "local" (empty = default mr).
+// mergeStrategy is optional: "direct", "mr", "local", or "batch-pr" (empty = default mr).
 // Returns the created convoy ID.
 func createAutoConvoy(beadID, beadTitle string, owned bool, mergeStrategy, baseBranch string) (_ string, retErr error) {
 	defer func() { telemetry.RecordConvoyCreate(context.Background(), beadID, retErr) }()
