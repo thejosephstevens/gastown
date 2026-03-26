@@ -87,6 +87,46 @@ func TestBuildEscalationMailBody(t *testing.T) {
 	}
 }
 
+func TestSetMetadataFields_NewField(t *testing.T) {
+	desc := "owner: crew/nuclear\nconvoy_status: open"
+	result := setMetadataFields(desc, map[string]string{
+		"review_round": "1",
+	})
+	if !contains(result, "review_round: 1") {
+		t.Errorf("expected review_round: 1 in result, got:\n%s", result)
+	}
+	if !contains(result, "owner: crew/nuclear") {
+		t.Error("existing fields should be preserved")
+	}
+}
+
+func TestSetMetadataFields_UpdateExisting(t *testing.T) {
+	desc := "convoy_status: open\nreview_round: 2"
+	result := setMetadataFields(desc, map[string]string{
+		"convoy_status": "review_escalated",
+		"review_round":  "4",
+	})
+	if !contains(result, "convoy_status: review_escalated") {
+		t.Errorf("expected updated convoy_status, got:\n%s", result)
+	}
+	if !contains(result, "review_round: 4") {
+		t.Errorf("expected updated review_round, got:\n%s", result)
+	}
+	// Should not contain old values.
+	if contains(result, "convoy_status: open") {
+		t.Error("old convoy_status should be replaced")
+	}
+}
+
+func TestSetMetadataFields_Empty(t *testing.T) {
+	result := setMetadataFields("", map[string]string{
+		"convoy_status": "review_escalated",
+	})
+	if !contains(result, "convoy_status: review_escalated") {
+		t.Errorf("expected convoy_status in result: %q", result)
+	}
+}
+
 func contains(s, substr string) bool {
 	for i := 0; i <= len(s)-len(substr); i++ {
 		if s[i:i+len(substr)] == substr {
