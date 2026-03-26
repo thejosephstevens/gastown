@@ -1,0 +1,117 @@
+# .gates.toml — Decomposition verification gate steps
+#
+# Defines the verification gates inserted between implementation phases by
+# mol-decompose-with-gates. Each [[step]] becomes a gate bead whose polecat
+# reads and executes the instructions as a review task.
+#
+# Cascade lookup (first non-empty source wins; no merging):
+#   1. Formula var `gate_steps` (list of step objects)
+#   2. Rig-level:  <rig-root>/.gates.toml
+#   3. HQ-level:   <town-root>/.gates.toml
+#
+# Schema per step:
+#   name         (string, required) — Short slug identifier (e.g. "run-tests")
+#   description  (string, required) — One-line human summary
+#   instructions (string, required) — Full prose instructions the gate polecat
+#                                     reads and executes
+
+[[step]]
+name = "run-tests"
+description = "Run the full test suite and report failures"
+instructions = """
+Run the project's full test suite against the implementation branch.
+
+1. Identify the test command from CLAUDE.md, AGENTS.md, or the project's
+   Makefile/package.json. Common commands: `make test`, `go test ./...`,
+   `npm test`, `pytest`.
+2. Run the test suite. Capture stdout and stderr.
+3. If all tests pass, close this gate bead.
+4. If any tests fail:
+   - List each failing test with its error output.
+   - Identify which implementation bead likely introduced the failure.
+   - File a bug bead blocking the failing implementation bead.
+   - Do NOT close this gate until all tests pass.
+"""
+
+[[step]]
+name = "architectural-review"
+description = "Review for pattern adherence, interface boundaries, and composition over inheritance"
+instructions = """
+Review the implementation diff (origin/main...HEAD) for architectural quality.
+
+Check for:
+- **Pattern adherence**: Does the code follow existing codebase conventions?
+  Look at neighboring files for naming, structure, and error handling patterns.
+- **Interface boundaries**: Are public APIs minimal and well-defined? Are
+  internal details properly encapsulated?
+- **Composition over inheritance**: Prefer struct embedding and interface
+  satisfaction over deep type hierarchies.
+- **Dependency direction**: Dependencies should point inward (handlers →
+  services → repositories). No circular imports.
+- **Single responsibility**: Each file/function/type should have one clear
+  purpose. Flag God objects and kitchen-sink utilities.
+
+For each issue found:
+- Classify as CRITICAL (must fix), MAJOR (should fix), or MINOR (nice to fix).
+- Reference the specific file and line range.
+- Suggest a concrete fix.
+
+Close the gate if no CRITICAL or MAJOR issues remain.
+"""
+
+[[step]]
+name = "security-review"
+description = "OWASP top 10, injection, auth/authz, input validation"
+instructions = """
+Review the implementation diff for security vulnerabilities.
+
+Check for OWASP Top 10 categories:
+- **Injection**: SQL injection, command injection, LDAP injection, log injection.
+  Verify all external input is parameterized or escaped.
+- **Broken authentication/authorization**: Hardcoded credentials, missing auth
+  checks, privilege escalation paths, insecure session handling.
+- **Sensitive data exposure**: Secrets in code or logs, unencrypted storage,
+  PII in error messages.
+- **Input validation**: Missing or insufficient validation at system boundaries
+  (HTTP handlers, CLI args, file parsing, IPC).
+- **Security misconfiguration**: Overly permissive defaults, debug mode enabled,
+  unnecessary features exposed.
+- **Path traversal**: Unsanitized file paths from user input.
+
+For each finding:
+- Classify severity: CRITICAL, HIGH, MEDIUM, LOW.
+- Reference the specific file and line range.
+- Provide a concrete remediation.
+
+Close the gate if no CRITICAL or HIGH issues remain.
+"""
+
+[[step]]
+name = "adversarial-testing-review"
+description = "Attempt to break the implementation via edge cases and misuse scenarios"
+instructions = """
+Act as an adversarial tester. Attempt to break the implementation through
+edge cases, unexpected inputs, and misuse scenarios.
+
+Strategies:
+- **Boundary values**: Zero, negative, max-int, empty strings, nil/null,
+  Unicode edge cases (emoji, RTL, zero-width chars).
+- **Concurrency**: Race conditions, deadlocks, double-close on channels,
+  shared mutable state without synchronization.
+- **Resource exhaustion**: Unbounded allocations, missing timeouts, leaked
+  goroutines/file handles, infinite loops on malformed input.
+- **Error paths**: What happens when every external call fails? Are errors
+  propagated correctly? Does cleanup run on failure?
+- **State corruption**: Partial writes, interrupted operations, inconsistent
+  state after panics or crashes.
+- **Misuse**: Can the API be called in an order that wasn't intended? What
+  happens with duplicate calls, re-entrant calls, or out-of-order operations?
+
+For each issue found:
+- Describe the attack/misuse scenario.
+- Show the expected vs actual behavior.
+- Classify as CRITICAL (data loss/corruption), MAJOR (incorrect behavior),
+  or MINOR (degraded UX).
+
+Close the gate if no CRITICAL or MAJOR issues remain.
+"""
