@@ -2,6 +2,7 @@ package beads
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 )
 
@@ -595,4 +596,68 @@ func TestDetectIntegrationBranch(t *testing.T) {
 			t.Errorf("got %q, want %q", got, "grandparent/branch")
 		}
 	})
+}
+
+// ---------------------------------------------------------------------------
+// PR field helpers
+// ---------------------------------------------------------------------------
+
+func TestAddPRURLField(t *testing.T) {
+	tests := []struct {
+		name string
+		desc string
+		url  string
+		want string
+	}{
+		{
+			name: "add to empty",
+			desc: "",
+			url:  "https://github.com/owner/repo/pull/42",
+			want: "pr_url: https://github.com/owner/repo/pull/42",
+		},
+		{
+			name: "add to existing",
+			desc: "integration_branch: convoy/hq-abc\nSome text",
+			url:  "https://github.com/owner/repo/pull/42",
+			want: "pr_url: https://github.com/owner/repo/pull/42\nintegration_branch: convoy/hq-abc\nSome text",
+		},
+		{
+			name: "replace existing",
+			desc: "pr_url: https://old-url\nSome text",
+			url:  "https://github.com/owner/repo/pull/99",
+			want: "pr_url: https://github.com/owner/repo/pull/99\nSome text",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := AddPRURLField(tt.desc, tt.url)
+			if got != tt.want {
+				t.Errorf("AddPRURLField() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestGetPRURLField(t *testing.T) {
+	desc := "pr_url: https://github.com/owner/repo/pull/42\nSome text"
+	got := GetPRURLField(desc)
+	if got != "https://github.com/owner/repo/pull/42" {
+		t.Errorf("GetPRURLField() = %q, want URL", got)
+	}
+}
+
+func TestAddPRNumberField(t *testing.T) {
+	desc := "integration_branch: convoy/hq-abc"
+	got := AddPRNumberField(desc, 42)
+	if !strings.Contains(got, "pr_number: 42") {
+		t.Errorf("AddPRNumberField() = %q, want to contain 'pr_number: 42'", got)
+	}
+}
+
+func TestGetPRNumberField(t *testing.T) {
+	desc := "pr_number: 42\nSome text"
+	got := GetPRNumberField(desc)
+	if got != "42" {
+		t.Errorf("GetPRNumberField() = %q, want %q", got, "42")
+	}
 }
